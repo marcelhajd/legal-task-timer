@@ -334,3 +334,10 @@ def complete_task(task_id: int, current_user: User = Depends(get_current_user), 
 @app.get("/")
 def root():
     return {"message": "Legal Task Timer API", "version": "1.0.0"}
+
+
+@app.get("/")
+def root():
+    return {"message": "Legal Task Timer API", "version": "1.0.0"}
+
+# Updated CORS - 2025-02-02
