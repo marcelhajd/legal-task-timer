@@ -1,34 +1,8 @@
 [phases.setup]
-nixPkgs = ['python39']
+nixPkgs = ['python311']
 
 [phases.install]
-cmds = ['pip install -r backend/requirements.txt']
+cmds = ['cd backend && pip install -r requirements.txt']
 
 [start]
 cmd = 'cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT'
-```
-
-Click **"Commit changes"**
-
----
-
-### **File 2: Procfile** (backup method)
-
-**Filename:** `Procfile` (in the root, not in backend folder)
-
-**Content:**
-```
-web: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
-```
-
-Click **"Commit changes"**
-
----
-
-### **File 3: runtime.txt** (specify Python version)
-
-**Filename:** `runtime.txt` (in the root)
-
-**Content:**
-```
-python-3.9.18
