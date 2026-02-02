@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Query
+from fastapi import FastAPI, Depends, HTTPException, status, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
@@ -160,6 +160,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
 # App
 app = FastAPI(title="Legal Task Timer")
 
+# CORS - Allow all origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -168,14 +169,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Force CORS headers
+# Additional CORS middleware to ensure headers are set
 @app.middleware("http")
-async def add_cors_headers(request, call_next):
+async def add_cors_headers(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = Response()
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+    
     response = await call_next(request)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
 # Create tables
@@ -269,7 +276,6 @@ def start_timer(task_id: int, current_user: User = Depends(get_current_user), db
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
-    # Auto-stop running session
     running = db.query(TaskSession).filter(
         TaskSession.user_id == current_user.id,
         TaskSession.end_time.is_(None)
@@ -281,7 +287,6 @@ def start_timer(task_id: int, current_user: User = Depends(get_current_user), db
         running.duration_seconds = int((running.end_time - running.start_time).total_seconds())
         stopped_task = db.query(Task).filter(Task.id == running.task_id).first()
     
-    # Start new session
     session = TaskSession(
         task_id=task_id,
         user_id=current_user.id,
@@ -340,11 +345,6 @@ def complete_task(task_id: int, current_user: User = Depends(get_current_user), 
     task.completed_at = datetime.utcnow()
     db.commit()
     return {"message": "Task completed"}
-
-@app.get("/")
-def root():
-    return {"message": "Legal Task Timer API", "version": "1.0.0"}
-
 
 @app.get("/")
 def root():
