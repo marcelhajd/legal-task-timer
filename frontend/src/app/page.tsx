@@ -27,27 +27,35 @@ export default function Dashboard() {
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
   const [elapsed, setElapsed] = useState(0)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('token')
-    if (savedToken) {
-      setToken(savedToken)
-      fetchTasks(savedToken)
-      fetchActiveTask(savedToken)
+    if (typeof window !== 'undefined') {
+      const savedToken = localStorage.getItem('token')
+      if (savedToken) {
+        setToken(savedToken)
+        fetchTasks(savedToken)
+        fetchActiveTask(savedToken)
+      }
     }
   }, [])
 
   useEffect(() => {
     if (activeTask?.is_running) {
+      setElapsed(activeTask.total_duration)
       const interval = setInterval(() => {
         setElapsed(prev => prev + 1)
       }, 1000)
       return () => clearInterval(interval)
     }
-  }, [activeTask?.is_running])
+  }, [activeTask?.is_running, activeTask?.total_duration])
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError('')
+    setLoading(true)
+    
     const endpoint = isLogin ? '/auth/login' : '/auth/register'
     const body = isLogin 
       ? { email, password }
@@ -59,15 +67,31 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        setError(errorData.detail || 'Authentication failed')
+        setLoading(false)
+        return
+      }
+
       const data = await response.json()
       
       if (data.access_token) {
         localStorage.setItem('token', data.access_token)
         setToken(data.access_token)
-        fetchTasks(data.access_token)
+        await fetchTasks(data.access_token)
+        await fetchActiveTask(data.access_token)
+      } else if (!isLogin) {
+        // Registration successful but need to login
+        setIsLogin(true)
+        setError('Account created! Please login.')
       }
-    } catch (error) {
-      console.error('Auth error:', error)
+    } catch (err) {
+      setError('Network error. Please try again.')
+      console.error('Auth error:', err)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -76,8 +100,17 @@ export default function Dashboard() {
       const response = await fetch(`${API_URL}/tasks`, {
         headers: { 'Authorization': `Bearer ${authToken}` }
       })
-      const data = await response.json()
-      setTasks(data)
+      
+      if (response.ok) {
+        const data = await response.json()
+        if (Array.isArray(data)) {
+          setTasks(data)
+        }
+      } else if (response.status === 401) {
+        // Unauthorized - clear token and redirect to login
+        localStorage.removeItem('token')
+        setToken(null)
+      }
     } catch (error) {
       console.error('Fetch tasks error:', error)
     }
@@ -88,10 +121,13 @@ export default function Dashboard() {
       const response = await fetch(`${API_URL}/tasks/active`, {
         headers: { 'Authorization': `Bearer ${authToken}` }
       })
-      const data = await response.json()
-      if (data) {
-        setActiveTask(data)
-        setElapsed(data.total_duration)
+      
+      if (response.ok) {
+        const data = await response.json()
+        if (data) {
+          setActiveTask(data)
+          setElapsed(data.total_duration || 0)
+        }
       }
     } catch (error) {
       console.error('Fetch active task error:', error)
@@ -110,10 +146,13 @@ export default function Dashboard() {
         },
         body: JSON.stringify({ title: newTaskTitle })
       })
-      const newTask = await response.json()
-      setTasks([newTask, ...tasks])
-      setNewTaskTitle('')
-      setShowNewTask(false)
+      
+      if (response.ok) {
+        const newTask = await response.json()
+        setTasks([newTask, ...tasks])
+        setNewTaskTitle('')
+        setShowNewTask(false)
+      }
     } catch (error) {
       console.error('Create task error:', error)
     }
@@ -127,14 +166,17 @@ export default function Dashboard() {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       })
-      const data = await response.json()
       
-      if (data.stopped_task) {
-        alert(`Stopped: ${data.stopped_task.title}`)
+      if (response.ok) {
+        const data = await response.json()
+        
+        if (data.stopped_task) {
+          alert(`Stopped: ${data.stopped_task.title}`)
+        }
+        
+        await fetchTasks(token)
+        await fetchActiveTask(token)
       }
-      
-      fetchTasks(token)
-      fetchActiveTask(token)
     } catch (error) {
       console.error('Start timer error:', error)
     }
@@ -144,12 +186,15 @@ export default function Dashboard() {
     if (!token) return
 
     try {
-      await fetch(`${API_URL}/tasks/${taskId}/stop`, {
+      const response = await fetch(`${API_URL}/tasks/${taskId}/stop`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       })
-      setActiveTask(null)
-      fetchTasks(token)
+      
+      if (response.ok) {
+        setActiveTask(null)
+        await fetchTasks(token)
+      }
     } catch (error) {
       console.error('Stop timer error:', error)
     }
@@ -159,13 +204,16 @@ export default function Dashboard() {
     if (!token) return
 
     try {
-      await fetch(`${API_URL}/tasks/${taskId}/complete`, {
+      const response = await fetch(`${API_URL}/tasks/${taskId}/complete`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       })
-      fetchTasks(token)
-      if (activeTask?.id === taskId) {
-        setActiveTask(null)
+      
+      if (response.ok) {
+        await fetchTasks(token)
+        if (activeTask?.id === taskId) {
+          setActiveTask(null)
+        }
       }
     } catch (error) {
       console.error('Complete task error:', error)
@@ -198,6 +246,12 @@ export default function Dashboard() {
             <p className="text-gray-600 mt-2">Track your legal work with precision</p>
           </div>
 
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+              {error}
+            </div>
+          )}
+
           <form onSubmit={handleAuth} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
@@ -220,6 +274,7 @@ export default function Dashboard() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="••••••••"
                 required
+                minLength={8}
               />
             </div>
 
@@ -232,22 +287,26 @@ export default function Dashboard() {
                   onChange={(e) => setFullName(e.target.value)}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   placeholder="John Doe"
-                  required
+                  required={!isLogin}
                 />
               </div>
             )}
 
             <button
               type="submit"
-              className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white py-3 rounded-lg font-semibold hover:from-indigo-600 hover:to-purple-700 transition-all shadow-lg"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white py-3 rounded-lg font-semibold hover:from-indigo-600 hover:to-purple-700 transition-all shadow-lg disabled:opacity-50"
             >
-              {isLogin ? 'Sign In' : 'Create Account'}
+              {loading ? 'Please wait...' : (isLogin ? 'Sign In' : 'Create Account')}
             </button>
           </form>
 
           <div className="mt-6 text-center">
             <button
-              onClick={() => setIsLogin(!isLogin)}
+              onClick={() => {
+                setIsLogin(!isLogin)
+                setError('')
+              }}
               className="text-indigo-600 hover:text-indigo-700 font-medium"
             >
               {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
@@ -295,7 +354,7 @@ export default function Dashboard() {
       {/* Active Timer Widget */}
       {activeTask && (
         <div className="fixed bottom-6 right-6 z-50">
-          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-2xl shadow-2xl p-6 min-w-[340px] animate-in slide-in-from-bottom-4">
+          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-2xl shadow-2xl p-6 min-w-[340px]">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2">
                 <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
@@ -360,7 +419,7 @@ export default function Dashboard() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Time</p>
                 <p className="text-3xl font-bold text-gray-900 mt-2">
-                  {Math.floor(tasks.reduce((sum, t) => sum + t.total_duration, 0) / 3600)}h
+                  {Math.floor(tasks.reduce((sum, t) => sum + (t.total_duration || 0), 0) / 3600)}h
                 </p>
               </div>
               <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
@@ -445,7 +504,7 @@ export default function Dashboard() {
                         <p className="text-sm text-gray-500 mt-1">Matter: {task.matter}</p>
                       )}
                       <p className="text-sm text-gray-600 mt-2">
-                        Total: {formatTime(task.total_duration)}
+                        Total: {formatTime(task.total_duration || 0)}
                       </p>
                     </div>
 
